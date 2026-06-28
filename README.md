@@ -5,8 +5,7 @@
 
 ---
 
-<a name="en"></a>
-## 🇬🇧 English
+<h2 id="en">🇬🇧 English</h2>
 
 **A free, open‑source music source aggregator for LX Music (洛雪音乐) – bring multiple platforms together in one script.**
 
@@ -51,7 +50,8 @@
 
 1. Open LX Music and go to **Settings → Music Source**.
 2. Click **"Import from URL"** and paste:
-3. 3. The script will load automatically. You can then select it as your active music source.
+https://cloud.7so.top/f/MZW6fz/Allone%20Music%20SourceV1.0.0.5.js
+3. The script will load automatically. You can then select it as your active music source.
 
 **Manual Installation**
 
@@ -111,8 +111,7 @@ See the [LICENSE](LICENSE) file for details.
 
 ---
 
-<a name="zh-cn"></a>
-## 🇨🇳 简体中文
+<h2 id="zh-cn">🇨🇳 简体中文</h2>
 
 **一个免费、开源的洛雪音乐音源聚合脚本 – 将多个平台集成到一个脚本中。**
 
@@ -156,8 +155,8 @@ See the [LICENSE](LICENSE) file for details.
 **洛雪音乐桌面版/移动版**
 
 1. 打开洛雪音乐，进入 **设置 → 音乐来源**。
-2. 点击 **“从 URL 导入”**，粘贴：
-3. 3. 脚本会自动加载，然后您可以选择它作为当前音源。
+2. 点击 **“从 URL 导入”**，粘贴：https://cloud.7so.top/f/MZW6fz/Allone%20Music%20SourceV1.0.0.5.js
+3. 脚本会自动加载，然后您可以选择它作为当前音源。
 
 **手动安装**
 
@@ -217,8 +216,7 @@ See the [LICENSE](LICENSE) file for details.
 
 ---
 
-<a name="zh-tw"></a>
-## 🇹🇼 繁體中文
+<h2 id="zh-tw">🇹🇼 繁體中文</h2>
 
 **一個免費、開源的洛雪音樂音源聚合腳本 – 將多個平台集成到一個腳本中。**
 
@@ -262,4 +260,65 @@ See the [LICENSE](LICENSE) file for details.
 **洛雪音樂桌面版/行動版**
 
 1. 開啟洛雪音樂，進入 **設定 → 音樂來源**。
-2. 點擊 **「從 URL 匯入」**，貼上：
+2. 點擊 **「從 URL 匯入」**，貼上：https://cloud.7so.top/f/MZW6fz/Allone%20Music%20SourceV1.0.0.5.js
+3. 腳本會自動載入，然後您可以選擇它作為目前音源。
+
+**手動安裝**
+
+- 從 [Releases](https://github.com/nkolp/Sound-source-for-all/releases) 頁面下載最新的 `source.js`。
+- 將其放入洛雪音樂的 `custom_sources` 資料夾（或透過圖形界面匯入）。
+
+### ⚙️ 配置（可選）
+
+編輯 `source.js` 頂部的變數：
+
+| 變數                   | 作用                                                         |
+|------------------------|--------------------------------------------------------------|
+| `DEBUG`                | 設為 `true` 可輸出詳細主控台日誌（便於除錯）。                |
+| `CACHE_TTL_MS`         | 快取有效期（毫秒，預設 6 小時）。                             |
+| `REQUEST_TIMEOUT`      | 請求逾時（毫秒，預設 15000）。                                |
+| `YUNINGXI_KEY`         | **QQ 音樂必需** – 從 [http://api-v2.yuafeng.cn] 獲取。        |
+| `HUIBQ_API` / `KEY`    | 可選：填入自己的 Huibq 憑證。                                 |
+| `LINGCHUAN_API`        | 可選：自訂聆川端點。                                          |
+
+> **注意：** 大多數源無需任何 Key，僅 QQ（透過玉寧熙）需要手動配置。
+
+### 🛠️ 開發與貢獻
+
+歡迎貢獻！參與方式：
+
+1. **複刻** 本倉庫。
+2. **建立新分支** 進行功能或修復。
+3. **進行修改** – 保持程式碼整潔，加入註解，必要時更新此 README。
+4. **在洛雪音樂中充分測試**。
+5. **提交拉取請求**，附上清晰的修改說明。
+
+**報告問題**
+
+如果某個源失效或遇到錯誤：
+
+- 開啟 `DEBUG` 擷取日誌。
+- 提交 Issue，包含：
+  - 平台（如網易、酷我）。
+  - 嘗試的歌曲。
+  - 主控台輸出的錯誤訊息。
+
+### 📜 許可證
+
+本專案採用 **GNU General Public License v3.0** 許可。  
+詳見 [LICENSE](LICENSE) 檔案。
+
+### 🙏 致謝
+
+- [洛雪音樂](https://github.com/lyswhut/lx-music-desktop) – 優秀的播放器。
+- 所有公開音樂 API 及其開發者。
+- 社群測試和回饋。
+
+### 📬 社群與支援
+
+- **GitHub Issues**：[https://github.com/nkolp/Sound-source-for-all/issues](https://github.com/nkolp/Sound-source-for-all/issues)
+- **洛雪音樂官方群**：[QQ群 822317725](https://qm.qq.com/q/822317725)
+
+---
+
+**Enjoy your music – freely and reliably! / 享受音樂 – 自由且可靠！**
