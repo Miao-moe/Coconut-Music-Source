@@ -28,6 +28,7 @@
 - **LRU 缓存**：同一歌曲同一音质 6 小时内直接复用链接（最多 300 条），重播几乎零延迟。
 - **音质自动降级**：请求的音质不可用时，自动按 128k → 320k → flac → flac24bit 顺序回退，优先保证能播。
 - **防盗链过滤**：识别酷我等平台需要 Referer/Cookie 的高风险直链，直接跳过并尝试下一后端，不返回无法播放的地址。
+- **咪咕 ID 解析**：musicInfo 缺少真实 contentId 时自动经咪咕公开搜索接口解析并缓存，保证自建咪咕接口在真实使用场景可命中。
 - **密钥加密存储**：脚本正文完全明文可读，仅将内置 API 密钥/Token 以「XOR + Base64」加密存放，运行时解密使用。
 - **双端兼容**：同时兼容洛雪桌面版与移动版自定义源规范，移动端无 Node/Browser 宿主 API 依赖。
 
@@ -57,11 +58,11 @@
 
 ## 📄 获取音源脚本
 
-- **方式一（推荐）**：直接下载仓库根目录的 [`stellarwave-v0.0.13.js`](./stellarwave-v0.0.13.js)，用文本编辑器打开后复制全部内容。
+- **方式一（推荐）**：直接下载仓库根目录的 [`stellarwave-v0.0.14.js`](./stellarwave-v0.0.14.js)，用文本编辑器打开后复制全部内容。
 - **方式二**：用命令行获取：
 
 ```bash
-curl -O https://raw.githubusercontent.com/Miao-moe/Stellarwave-Music-Source/main/stellarwave-v0.0.13.js
+curl -O https://raw.githubusercontent.com/Miao-moe/Stellarwave-Music-Source/main/stellarwave-v0.0.14.js
 ```
 
 注意：脚本必须完整复制（从开头 `/**` 注释块到最后一行 `console.log`），中间截断会导致初始化失败。
@@ -87,6 +88,13 @@ curl -O https://raw.githubusercontent.com/Miao-moe/Stellarwave-Music-Source/main
 ---
 
 ## 📈 更新日志
+
+### v0.0.14 (2026-11-08)
+
+- 按维护者确认修复自建咪咕 H5 v2.4：token 原本即完整（`KonekoIloveyou@2026.....99-_`，点号为字面量），请求**必须携带 `Koneko` / `ynx` / `des` 防爬请求头**，实测带请求头后返回可播直链；接口维护记录已更新为验证通过。
+- 新增咪咕歌曲 ID 搜索解析兜底：LX musicInfo 缺少真实 contentId 时（常见），先经咪咕公开搜索接口按歌名+歌手匹配出 contentId/copyrightId 再请求 H5 v2.4（缓存 6 小时），避免用 copyrightId 冒充 contentId 导致上游 500。
+- 网易云后端按当日二次实测微调：ikun 升入第一梯队与官方 EAPI 竞速（实测返回直链），gdstudio 当前返回空 url 降入第二梯队保留兜底。
+- 同步更新接口维护记录（QQ 官方 vkey 风控状态、酷我双后端复核等）。
 
 ### v0.0.13 (2026-11-08)
 

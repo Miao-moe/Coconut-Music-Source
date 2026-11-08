@@ -2,6 +2,13 @@
 
 本文件记录新星澜音乐源（及前身星澜聚合音源）的版本历史。`README.md` 为长期项目介绍，不绑定具体版本；各版本改动以本文件为准。
 
+## v0.0.14 (2026-11-08)
+
+- 自建咪咕 H5 v2.4 修复与验证：维护者确认 token 原本即完整（`KonekoIloveyou@2026.....99-_`，`.....` 为字面量点号），并非被遮蔽；此前实测失败原因是**未携带固定防爬请求头**。带 `Koneko: Iloveyou` / `ynx: Iloveyou` / `des: 2026IloveyouIwant99It'sSOOOOOspecial` 请求头后实测返回 HTTP 200 与可播直链；不带请求头返回 403 验证页。该接口状态由 🟡 更新为 ✅。
+- 新增咪咕歌曲 ID 搜索解析兜底（`resolveMiguIds`）：该接口的 contentId 必须为真实值（实测用 copyrightId 冒充会返回 500），而 LX 咪咕 musicInfo 通常只带 copyrightId。现在会先经咪咕公开搜索接口（`app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do`，实测可用）按歌名+歌手匹配出真实 contentId/copyrightId 再请求，结果缓存 6 小时；musicInfo 已带真实 contentId 时直连优先。musicInfo 完全无 ID 时允许按歌名走纯搜索兜底。
+- 网易云梯队微调（按 2026-11-08 二次实测）：ikun（c.wwwweb.top）实测返回直链，升入第一梯队与网易云官方 EAPI 并发竞速；gdstudio（music-api.gdstudio.xyz）当前对 128/320 均返回空 url，降入第二梯队保留兜底。
+- 接口维护记录同步二次实测结论：QQ 官方 vkey retcode=0 但 purl 被风控剥离（数据中心 IP）；vkeys / HelloWorld / 酷我双官方后端 / 网易云官方（免费歌）复核可用。
+
 ## v0.0.13 (2026-11-08)
 
 - 依据维护对话重新提取上游 API，重建 QQ / 网易 / 酷我 / 酷狗 / 咪咕五平台后端兜底链，共 35 个后端。

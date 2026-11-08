@@ -1,7 +1,7 @@
 /**
  * @name 新星澜音乐源
  * @description 聚合五平台多后端自动兜底的自定义音源
- * @version 0.0.13
+ * @version 0.0.14
  * @author 曦&無名&云汀（Miao-moe）
  * @homepage https://github.com/Miao-moe/Stellarwave-Music-Source
  * @tx_cookie null
@@ -10,6 +10,11 @@
  * @yunmge_token null
  * @apizero_key null
  * @changelog
+ *   - v0.0.14 按维护者确认：自建咪咕 H5 v2.4 的 token 原本即完整（含点号），请求时
+ *     必须带上 Koneko/ynx/des 防爬请求头才能返回数据，实测已返回可播直链。新增咪咕
+ *     歌曲 ID 搜索解析兜底：LX musicInfo 缺少真实 contentId 时，先经咪咕公开搜索接口
+ *     按歌名+歌手匹配拿到真实 contentId/copyrightId 再请求 H5 v2.4（结果带缓存），
+ *     避免 copyrightId 冒充 contentId 导致上游 500。网易后端按当日实测微调梯队顺序。
  *   - v0.0.13 按维护对话提取上游 API 重建后端链：脚本正文保持明文可读，仅将 API 密钥/Token
  *     以「XOR + Base64」加密存储，运行时解密使用；按 2026-11 实测把已验证可用的后端
  *     （酷我官方/nmobi、vkeys、HelloWorld、gdstudio(网易) 等）排到优先层；每平台保留更多
@@ -497,10 +502,6 @@ const WY_BACKENDS = [
     },
   },
   {
-    name: 'gdstudio网易',
-    fetch: async (songmid, quality) => gdstudioNetease(songmid, quality),
-  },
-  {
     name: 'ikun网易云',
     fetch: async (songmid, quality, musicInfo = {}) => {
       const songId = (musicInfo.hash != null) ? musicInfo.hash : songmid
@@ -517,6 +518,10 @@ const WY_BACKENDS = [
       if (d.code === 429) throw new Error('ikun网易云: 请求过速')
       throw new Error('ikun网易云: ' + (d.message || '获取URL失败'))
     },
+  },
+  {
+    name: 'gdstudio网易',
+    fetch: async (songmid, quality) => gdstudioNetease(songmid, quality),
   },
   {
     name: 'HYWmusic',
@@ -806,33 +811,109 @@ const getMiguContentIds = (musicInfo = {}, fallback = '') => {
   return { contentId: String(contentId || '').trim(), copyrightId: String(copyrightId || '').trim() }
 }
 
+// LX 的咪咕 musicInfo 通常只带 copyrightId（songmid），没有真实 contentId；
+// 而自建 H5 v2.4 接口的 contentId 必须是真实值，否则上游 500。
+// 这里用咪咕公开搜索接口按「歌名 + 歌手」匹配，解析出真实 contentId/copyrightId 并缓存。
+const MIGU_ID_CACHE_TTL_MS = 21600000 // 6 小时
+const miguIdCache = new Map()
+
+const fetchMiguSearch = async (keyword) => {
+  const url = 'https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do?text='
+    + encodeURIComponent(keyword)
+    + '&pageNo=1&pageSize=10&searchSwitch=' + encodeURIComponent('{"song":1}')
+  const res = await httpFetch(url, {
+    method: 'GET', timeout: 8000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36',
+      Accept: 'application/json',
+      Referer: 'https://m.music.migu.cn/',
+    },
+  })
+  const d = res.body
+  const rows = (d && d.songResultData && d.songResultData.result) || []
+  return Array.isArray(rows) ? rows : []
+}
+
+const normalizeCn = (s) => String(s || '').toLowerCase().replace(/\s+/g, '').replace(/[(（].*?[)）]/g, '')
+
+const resolveMiguIds = async (musicInfo = {}, songmid = '') => {
+  const cacheKey = 'mgid_' + songmid
+  const cached = miguIdCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < MIGU_ID_CACHE_TTL_MS) return cached.ids
+
+  // 先按歌名+歌手匹配，再按歌名匹配
+  const name = musicInfo.name || musicInfo.songName || musicInfo.title || ''
+  const singer = musicInfo.singer || musicInfo.artist || musicInfo.author || ''
+  const candidates = []
+  if (name && singer) candidates.push((name + ' ' + singer).trim())
+  if (name) candidates.push(name)
+
+  const normName = normalizeCn(name)
+  const normSinger = normalizeCn(singer)
+  for (const keyword of candidates) {
+    let rows = []
+    try { rows = await fetchMiguSearch(keyword) } catch (e) { rows = [] }
+    let hit = null
+    for (const row of rows) {
+      if (!row || !row.contentId || !row.copyrightId) continue
+      const rowName = normalizeCn(row.name)
+      const rowSinger = normalizeCn((row.singers || []).map(x => x && x.name).join(','))
+      const nameOk = normName ? (rowName === normName || rowName.indexOf(normName) >= 0) : true
+      const singerOk = normSinger ? rowSinger.indexOf(normSinger) >= 0 : true
+      if (nameOk && singerOk) { hit = row; break }
+    }
+    if (!hit) continue
+    const ids = { contentId: String(hit.contentId).trim(), copyrightId: String(hit.copyrightId).trim() }
+    miguIdCache.set(cacheKey, { ids, timestamp: Date.now() })
+    return ids
+  }
+
+  // 搜索无结果：回退到 musicInfo 自带字段（若有真实 contentId 则可用）
+  const guess = getMiguContentIds(musicInfo, songmid)
+  const hasRealContentId = !!(musicInfo.contentId || musicInfo.content_id || musicInfo.contentid)
+  if (hasRealContentId && guess.contentId && guess.copyrightId) {
+    miguIdCache.set(cacheKey, { ids: guess, timestamp: Date.now() })
+    return guess
+  }
+  throw new Error('咪咕搜索解析: 未匹配到歌曲（' + String(name || songmid || '').slice(0, 40) + '）')
+}
+
+const miguFetchH5v24 = async (ids, toneFlag) => {
+  const api = MIGU_H5V24_BASE
+    + '?token=' + encodeURIComponent(MIGU_H5V24_TOKEN)
+    + '&contentId=' + encodeURIComponent(ids.contentId)
+    + '&copyrightId=' + encodeURIComponent(ids.copyrightId)
+    + '&toneFlag=' + encodeURIComponent(toneFlag)
+  const res = await httpFetch(api, {
+    method: 'GET', timeout: 10000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android)',
+      Koneko: MIGU_H5V24_KONEKO,
+      ynx: MIGU_H5V24_YNX,
+      des: MIGU_H5V24_DES,
+      Accept: 'application/json',
+    },
+  })
+  const d = res.body
+  const play = extractMiguUrl(d)
+  if (play && !isMiguInvalidUrl(play)) return play
+  throw new Error('自建咪咕H5v2.4: ' + ((d && (d.msg || d.message)) || '无可用直链'))
+}
+
 const MG_BACKENDS = [
   {
     name: '自建咪咕H5v2.4',
     fetch: async (songmid, quality, musicInfo = {}) => {
       if (!MIGU_H5V24_BASE || !MIGU_H5V24_TOKEN) throw new Error('自建咪咕H5v2.4: 未配置接口')
-      const ids = getMiguContentIds(musicInfo, songmid)
-      if (!ids.contentId || !ids.copyrightId) throw new Error('自建咪咕H5v2.4: 缺少 contentId/copyrightId')
       const toneFlag = MG_TONE_FLAG_MAP[quality] || 'PQ'
-      const api = MIGU_H5V24_BASE
-        + '?token=' + encodeURIComponent(MIGU_H5V24_TOKEN)
-        + '&contentId=' + encodeURIComponent(ids.contentId)
-        + '&copyrightId=' + encodeURIComponent(ids.copyrightId)
-        + '&toneFlag=' + encodeURIComponent(toneFlag)
-      const res = await httpFetch(api, {
-        method: 'GET', timeout: 10000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android)',
-          Koneko: MIGU_H5V24_KONEKO,
-          ynx: MIGU_H5V24_YNX,
-          des: MIGU_H5V24_DES,
-          Accept: 'application/json',
-        },
-      })
-      const d = res.body
-      const play = extractMiguUrl(d)
-      if (play && !isMiguInvalidUrl(play)) return play
-      throw new Error('自建咪咕H5v2.4: ' + ((d && (d.msg || d.message)) || '无可用直链'))
+      // 优先用 musicInfo 自带的真实 contentId；失败则走搜索解析兜底
+      const guess = getMiguContentIds(musicInfo, songmid)
+      const hasRealContentId = !!(musicInfo.contentId || musicInfo.content_id || musicInfo.contentid)
+      if (hasRealContentId && guess.contentId && guess.copyrightId) {
+        try { return await miguFetchH5v24(guess, toneFlag) } catch (e) { /* 落入搜索解析兜底 */ }
+      }
+      const ids = await resolveMiguIds(musicInfo, songmid)
+      return miguFetchH5v24(ids, toneFlag)
     },
   },
   {
@@ -915,7 +996,13 @@ const getQualityCandidates = (source, requestedQuality) => {
 
 // ==================== 核心请求（缓存 + 分批并发兜底） ====================
 const handleGetMusicUrl = async (source, musicInfo = {}, quality = LOWEST_QUALITY) => {
-  const songId = getSongIdBySource(source, musicInfo)
+  let songId = getSongIdBySource(source, musicInfo)
+  if (!songId && source === 'mg') {
+    // 咪咕兜底：musicInfo 缺少 ID 时允许纯搜索解析（按歌名+歌手）
+    const name = musicInfo.name || musicInfo.songName || musicInfo.title || ''
+    const singer = musicInfo.singer || musicInfo.artist || musicInfo.author || ''
+    if ((name + singer).trim()) songId = 'search:' + name + ' ' + singer
+  }
   if (!songId) throw new Error('无法获取歌曲ID')
 
   const backends = { tx: TX_BACKENDS, wy: WY_BACKENDS, kw: KW_BACKENDS, kg: KG_BACKENDS, mg: MG_BACKENDS }[source]
@@ -990,6 +1077,6 @@ MUSIC_SOURCE.forEach((item) => {
 
 send(EVENT_NAMES.inited, { openDevTools: false, sources: musicSources })
 
-console.log('[新星澜] v0.0.13 音乐源已加载完成 (' + (env || 'unknown') + ')')
+console.log('[新星澜] v0.0.14 音乐源已加载完成 (' + (env || 'unknown') + ')')
 console.log('[新星澜] 平台: ' + MUSIC_SOURCE.join(', '))
 console.log('[新星澜] QQ后端数: ' + TX_BACKENDS.length + ' | 网易: ' + WY_BACKENDS.length + ' | 酷我: ' + KW_BACKENDS.length + ' | 酷狗: ' + KG_BACKENDS.length + ' | 咪咕: ' + MG_BACKENDS.length)
