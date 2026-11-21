@@ -1,8 +1,19 @@
 # 更新日志 (CHANGELOG)
 
-本文件记录新星澜音乐源（及前身星澜聚合音源）的版本历史。`README.md` 为长期项目介绍，不绑定具体版本；各版本改动以本文件为准。
+本文件记录椰子音源（及前身新星澜音乐源、星澜聚合音源）的版本历史。`README.md` 为长期项目介绍，不绑定具体版本；各版本改动以本文件为准。
 
-## v0.0.14 (2026-11-08)
+## 春·立春 (2026-11-21，椰子音源)
+
+- 椰子音源首版：由新星澜音乐源 v0.0.14 改版更名而来（原作者 曦&無名&云汀，Miao-moe/Stellarwave-Music-Source，仓库已更名为 Miao-moe/Coconut-Music-Source）。版本号采用「季·节气」制：当前季为春，自二十四节气之首「立春」起；作者署名改为 椰椰（仅音源脚本内）。
+- 网易云修复（针对源测试「高音质恒为 128k」）：移除「无 Cookie 时强制请求 128k」的降级逻辑，改为按请求音质直取；免费歌曲无 Cookie 亦可获得 320k/flac，VIP 歌曲无权限时由官方后端抛错并走音质降级链。实测「一笑倾城」320k 直链文件 8.85MB，与元数据预期一致。
+- QQ 修复（针对源测试「无法匹配任何档位(大小: 0.92MB)」）：识别 vkeys 等后端返回的 RS01/RS02 试听片段直链（60 秒试听，文件名以 RS 开头），直接拒绝并继续兜底，不再把试听片段冒充正曲返回；QQ 官方 vkey 后端同样加入识别。VIP 歌曲在无 Cookie 时为诚实失败，配置 `@tx_cookie` 后按账号权限获取。
+- 酷狗修复（针对源测试「所有获取播放链接的方式均失败」）：新增「酷狗v5签名」后端并排入第一梯队——`gateway.kugou.com/v5/url`，参数按 key 排序拼接、`signature=md5("OIlwieks28dk2k092lksi2UIkp"+参数串+"OIlwieks28dk2k092lksi2UIkp")`、请求头 `KG-THash/KG-Rec/KG-RC/x-router`，实测免费歌曲返回 `fsandroid.tx.kugou.com` 直链（status=1），VIP 歌曲无登录态返回 status=2 诚实跳过；「酷狗官方」后端补齐随机 mid、`dfid=-`、`appid=1014`、`clientver=10000`、`ctype=51` 与 `kg_mid` Cookie，降低 30020 风控概率。
+- 咪咕修复（针对源测试「音质请求超时(5秒)」）：自建 H5 v2.4 转发服务器 2026-11-21 起失联（连通测试 8 秒无响应），超时由 10 秒收紧为 4 秒避免拖垮兜底链；新增官方后端「咪咕官方v2.4」（`listen-url/v2.4`，channel `014000D` + 内置设备 token/aversionid，songId=copyrightId，返回 data[0].url）与「咪咕官方v2.2」（channel `0146951` + uid 0，返回 data.url）；实测 v2.4 在线（内置 token 过期时返回「歌曲下线」软拒，保留兜底），v2.2 返回 870001 内部错误（保留兜底）。
+- 酷我优化：第一梯队调整为「酷我手机版（kwplayerhd 源）」优先——实测 320k 直链与 flac（O600 文件）均可返回，官方 jiakong 源其次（flac 会命中防盗链试听片段）；新增「ikun酷我」后端（`c.wwwweb.top`，实测返回真实直链）；防盗链过滤增加 `bitrate$1`/`bitrate$0` 试听片段识别。
+- 超时收紧：全部后端超时统一为 4~5 秒，适配源测试/播放器 5 秒取链窗口，避免单一失联后端拖垮整条链。
+- 接口维护记录同步 2026-11-21 二次实测结论（hhlqilongzhu 聚合 API 已下线、md.khkj.xyz 404、HelloWorld 响应退化、vkeys 间歇 503 等）。
+
+## v0.0.14 (2026-11-08，新星澜音乐源)
 
 - 自建咪咕 H5 v2.4 修复与验证：维护者确认 token 原本即完整（`KonekoIloveyou@2026.....99-_`，`.....` 为字面量点号），并非被遮蔽；此前实测失败原因是**未携带固定防爬请求头**。带 `Koneko: Iloveyou` / `ynx: Iloveyou` / `des: 2026IloveyouIwant99It'sSOOOOOspecial` 请求头后实测返回 HTTP 200 与可播直链；不带请求头返回 403 验证页。该接口状态由 🟡 更新为 ✅。
 - 新增咪咕歌曲 ID 搜索解析兜底（`resolveMiguIds`）：该接口的 contentId 必须为真实值（实测用 copyrightId 冒充会返回 500），而 LX 咪咕 musicInfo 通常只带 copyrightId。现在会先经咪咕公开搜索接口（`app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do`，实测可用）按歌名+歌手匹配出真实 contentId/copyrightId 再请求，结果缓存 6 小时；musicInfo 已带真实 contentId 时直连优先。musicInfo 完全无 ID 时允许按歌名走纯搜索兜底。
