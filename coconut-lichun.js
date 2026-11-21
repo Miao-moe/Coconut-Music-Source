@@ -1,30 +1,41 @@
 /**
  * @name 椰子音源
- * @description 聚合五平台多后端自动兜底的自定义音源（春·立春版，原 椰子音源 改版）
- * @version 春·立春
+ * @description 聚合五平台顺序兜底的自定义音源（春·雨水版，原 椰子音源 改版）
+ * @version 春·雨水
  * @author 椰椰
  * @homepage https://github.com/Miao-moe/Coconut-Music-Source
  * @tx_cookie null
  * @wy_cookie null
+ * @hyw_key null
+ * @canxiang_token null
  * @wanfeng_key null
  * @yunmge_token null
  * @apizero_key null
  * @changelog
+ *   - 春·雨水 兜底链重写（2026-11-21）：
+ *     1) 废除首两后端并发竞速（promiseAny），改为严格按实测可用性排序的顺序兜底——
+ *        竞速会把最慢后端的超时叠加进每次取链，导致超过播放器取链窗口而「测试接口失败」；
+ *     2) 实测可用后端前置（酷我手机版/官方、网易云官方 EAPI、gdstudio、ikun、酷狗v5签名），
+ *        需要填 API/Token 的后端（@apizero_key/@yunmge_token/@hyw_key 等）统一放到队尾；
+ *     3) 新增日志输出系统：时间戳+级别+平台标签，环形缓冲最近 300 条，控制台实时输出，
+ *        在脚本控制台执行 __coconutLog.dump() 可导出全部日志；
+ *     4) 新增失败冷却机制：某后端失败后 10 分钟内自动跳过（全部冷却时忽略冷却照常尝试），
+ *        避免每次播放都重复撞死接口；
+ *     5) 新增单次请求 9.5 秒时间预算，超预算立即返回已收集的错误摘要，不再无限拖长；
+ *     6) 音质降级链简化为「请求音质 → 128k」两轮，减少无效重试；
+ *     7) 实测下线后端清理：念心(nxinxz)系列 404、晚风(nonebot)路由 404、远梦(mmp)停服、
+ *        长青海棠停止服务、星海(zddyr)失联、笒鬼鬼 Cloudflare 521、ygking/HelloWorld/apibyte 失联、
+ *        旧版 FishAPI 签名接口无响应、酷我流媒体服务器音质参数已变更（直链无法校验，移除）；
+ *     8) HYWmusic 内置卡密已失效（401 卡密不存在），改为 @hyw_key 用户填写；残像支持
+ *        @canxiang_token 覆盖；云萌阁内置 token 实测仍有效；
+ *     9) 来源顺序调整为 网易、酷我、QQ、酷狗、咪咕（可用源优先显示）。
  *   - 春·立春 椰子音源首版（由 新星澜音乐源 v0.0.14 改版而来，原项目 Miao-moe/Stellarwave-Music-Source，
- *     原作者 曦&無名&云汀（Miao-moe）；版本号采用「季·节气」制，自二十四节气之首「立春」起）。本次修复：
- *     1) 网易云不再无 Cookie 时强制降 128k，按请求音质直取，试听/无权限自动降级（修复高音质恒为 128k）；
- *     2) QQ 对 vkeys/HelloWorld 等后端返回的 RS01/RS02 试听片段直链做识别并跳过，
- *        避免 VIP 歌曲拿到试听片段冒充正曲；
- *     3) 酷狗新增「酷狗v5签名」后端（gateway.kugou.com/v5/url，参数签名算法实测可用）排入第一梯队，
- *        酷狗官方后端补齐 mid/dfid/appid/clientver 与 kg_mid Cookie 降低风控概率；
- *     4) 咪咕新增官方 listen-url v2.4（channel 014000D + 设备 token）与 v2.2（channel 0146951）两个
- *        官方后端；自建 H5 v2.4 转发服务器 2026-11-21 起失联，超时收紧为 4 秒避免拖垮兜底链；
- *     5) 酷我调整第一梯队为手机版（kwplayerhd 源，实测 320k/flac 直链可用）优先，官方 jiakong 源其次；
- *        新增 ikun 酷我后端（实测返回直链）；防盗链过滤增加 bitrate$1 试听片段识别；
- *     6) 全部后端超时收紧至 4~5 秒，适配播放器 5 秒取链窗口。
+ *     原作者 曦&無名&云汀（Miao-moe）；版本号采用「季·节气」制，自二十四节气之首「立春」起）。
  *   - 配置项说明：@tx_cookie / @wy_cookie 为可选平台 Cookie（解锁高音质，按账号权限）；
- *     @wanfeng_key / @yunmge_token / @apizero_key 填写后优先使用你的密钥，不填写则使用
- *     内置加密默认值。咪咕官方接口与自建 H5 v2.4 的 token/防爬头均为内置固定配置，不需要用户填写。
+ *     @hyw_key（HYWmusic 卡密）/ @canxiang_token（残像 API）/ @wanfeng_key / @yunmge_token /
+ *     @apizero_key 填写后优先使用你的密钥，不填写则使用内置加密默认值（若有）；这些后端
+ *     均排在实测可用后端之后，不填写也不影响主力链路。咪咕官方接口与自建 H5 v2.4 的
+ *     token/防爬头均为内置固定配置，不需要用户填写。
  */
 
 const { EVENT_NAMES, request, on, send, utils, env, version, currentScriptInfo } = globalThis.lx
@@ -49,21 +60,6 @@ const randomGuid = () => {
   for (let i = 0; i < 32; i++) guid += hex[Math.floor(Math.random() * 16)]
   return guid
 }
-
-// Promise.any 兼容封装（移动端 JS 引擎可能未实现 ES2021 的 Promise.any）
-const promiseAny = (promises) => new Promise((resolve, reject) => {
-  const list = promises || []
-  let pending = list.length
-  const errors = new Array(pending)
-  if (!pending) return reject(new Error('无可用后端'))
-  list.forEach((p, i) => {
-    Promise.resolve(p).then(resolve, (e) => {
-      errors[i] = e
-      pending -= 1
-      if (!pending) reject(new Error(errors.map(x => (x && x.message) || String(x)).join('; ')))
-    })
-  })
-})
 
 const objToForm = (obj) => Object.keys(obj || {})
   .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(obj[k]))
@@ -110,8 +106,6 @@ const KEY_VAULT = {
   miguKoneko: 'GhgKGgkYHSI=',                                   // 固定防爬 header: Koneko
   miguYnx: 'GhgKGgkYHSI=',                                      // 固定防爬 header: ynx
   miguDes: 'YURXWiUNHSEEDwo1e0dTWFdPWDwYUyAnKiMjLj0kERMGKVNc',  // 固定防爬 header: des
-  hyw: 'HjspLSJMMBYoPCw=',                                      // HYWmusic 公益卡密
-  ak317: 'CT9SWj0rMR4pQzUQe3N4eWwuND0=',                        // 317ak ckey
   canxiang: 'MBULFAUAHDA+AgorV15tBBNEVw==',                     // 残像 API token
   miguAppToken: 'a0BdWFxQQmdRR1Z0AgICBhZOVEdYQGZNVlhYJEdjVUdWcAcCBHcXT1JHWUVkNVBZX1VGE1Y3UHYGAwZzFkNVQF9GZ0RTVFtVRWNWRlYBAHYAcBRGV0RbR2RHUlxaJ0VlVkJXBQR0BA8VQVZAXjFlR1MpXidEElJGVnABAAEHETBVRVpGYE1WWlpTQWBXQFZ0AQIEBRBAUkdaQGBAVlxfWEFiUk9WcwQGBAAVQlJGX0JlQFZYX1BBblJPVnkBAAEFEEZRRlxEY0BVXlVZNxYnNFV0AgACABBEUkdfRGBEVl5fVUJiUUZUdgZ0BgEWT1JAWTVnQFNfW1lGE1JEUQUECAZzF0JVTF9GZzJQW1lXRBVVM1BxdHYCBhFGVkxZRmVHJ1UtUkFkIEJQeAJ1AwVnMlYzXkxrRlUtVCNLYFlOI3MCAAQEZUBRR1kyEkRdLipQQhQiQyR4c3ECAg==', // 咪咕官方 listen-url v2.4 设备 token
   miguAversionid: 'FzJcWFRYSm5YRSR1cwIKdxVCWENUNWoyIVwtJTNnVkJccwsHCgEbNCJGVTAXQycvWlkxYllCJHFwcXNwYE9XMC9BakddKFQlShIlRyR0CwALAho3WTNVMRFCXVxVWEVlWEAhBnYAdgUaRyVDLTYRN1NVVVNKFiVGJ3UFdAsPFEFYNi9MEUxdLyglNxQkM115BAIKcBtPIERURmQxXFRaJ0tjWEFdAXYDCwRiQSBHVUVlNVxeVCAzY1lBXXELCQUBGjU=', // 咪咕官方 listen-url v2.4 aversionid
@@ -129,6 +123,8 @@ const parseHeader = (str) => {
   const pairs = [
     { key: 'tx_cookie', regex: /\*\s*@tx_cookie\s+(.+)/ },
     { key: 'wy_cookie', regex: /\*\s*@wy_cookie\s+(.+)/ },
+    { key: 'hyw_key', regex: /\*\s*@hyw_key\s+(.+)/ },
+    { key: 'canxiang_token', regex: /\*\s*@canxiang_token\s+(.+)/ },
     { key: 'wanfeng_key', regex: /\*\s*@wanfeng_key\s+(.+)/ },
     { key: 'yunmge_token', regex: /\*\s*@yunmge_token\s+(.+)/ },
     { key: 'apizero_key', regex: /\*\s*@apizero_key\s+(.+)/ },
@@ -166,17 +162,78 @@ const MIGU_APP_V22 = 'https://app.c.nf.migu.cn/MIGUM2.0/strategy/listen-url/v2.2
 const MIGU_APP_TOKEN = unlockKey(KEY_VAULT.miguAppToken)
 const MIGU_AVERSIONID = unlockKey(KEY_VAULT.miguAversionid)
 
-// 其余密钥（卡密/ckey/token 同样只走保险库）
-const HYW_CARD_KEY = unlockKey(KEY_VAULT.hyw)
-const AK317_CKEY = unlockKey(KEY_VAULT.ak317)
-const CANXIANG_TOKEN = unlockKey(KEY_VAULT.canxiang)
+// 其余密钥（卡密/token 同样只走保险库或用户填写；HYW 内置卡密 2026-11-21 实测 401 失效，
+// 春·雨水起改为 @hyw_key 用户填写，不填写则自动跳过该后端）
+const HYW_CARD_KEY = config.hyw_key || ''
+const CANXIANG_TOKEN = config.canxiang_token || unlockKey(KEY_VAULT.canxiang)
 const HYW_API_BASE = 'http://103.79.184.97'
 
+// ==================== 日志输出系统 ====================
+// 控制台实时输出（桌面端开发者工具 / 移动端日志页可见），同时保留最近 300 条环形缓冲；
+// 在脚本控制台执行 __coconutLog.dump() 导出全部日志，__coconutLog.last(20) 查看最近 20 条。
+const LOG_BUFFER_MAX = 300
+const LOG_LEVEL_PAD = { debug: 'DEBUG', info: 'INFO ', warn: 'WARN ', error: 'ERROR' }
+const logBuffer = []
+
+const logStamp = () => {
+  const d = new Date()
+  const p2 = (n) => (n < 10 ? '0' + n : '' + n)
+  const p3 = (n) => (n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n)
+  return p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) + '.' + p3(d.getMilliseconds())
+}
+
+const pushLog = (level, tag, msg) => {
+  const line = '[椰子 ' + logStamp() + ' ' + LOG_LEVEL_PAD[level] + '][' + tag + '] ' + String(msg)
+  logBuffer.push(line)
+  if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift()
+  if (level === 'error') console.error(line)
+  else if (level === 'warn') console.warn(line)
+  else console.log(line)
+}
+
+const Logger = {
+  debug: (tag, msg) => pushLog('debug', tag, msg),
+  info: (tag, msg) => pushLog('info', tag, msg),
+  warn: (tag, msg) => pushLog('warn', tag, msg),
+  error: (tag, msg) => pushLog('error', tag, msg),
+  dump: () => logBuffer.join('\n'),
+  last: (n) => logBuffer.slice(-(Number(n) || 20)).join('\n'),
+}
+
+globalThis.__coconutLog = { dump: Logger.dump, last: Logger.last }
+
+// ==================== 后端失败冷却 ====================
+// 某后端失败后 10 分钟内自动跳过，避免每次播放都重复撞死接口；
+// 若某次取链时该平台全部后端都在冷却中，则忽略冷却照常尝试。
+const BACKEND_COOLDOWN_MS = 600000
+const backendCooldown = new Map()
+
+const cooldownKey = (source, name) => source + '/' + name
+
+const markBackendFail = (source, name, reason) => {
+  backendCooldown.set(cooldownKey(source, name), { at: Date.now(), reason: String(reason).slice(0, 120) })
+}
+
+const clearBackendCooldown = (source, name) => {
+  backendCooldown.delete(cooldownKey(source, name))
+}
+
+const inBackendCooldown = (source, name) => {
+  const hit = backendCooldown.get(cooldownKey(source, name))
+  if (!hit) return false
+  if (Date.now() - hit.at > BACKEND_COOLDOWN_MS) {
+    backendCooldown.delete(cooldownKey(source, name))
+    return false
+  }
+  return true
+}
+
 // ==================== 音质列表（对齐官方自定义源文档有效值） ====================
+// 平台顺序即音源列表展示顺序：实测可用的网易/酷我优先（春·雨水）
 const MUSIC_QUALITY = {
-  tx: ['128k', '320k', 'flac', 'flac24bit'],
   wy: ['128k', '320k', 'flac', 'flac24bit'],
   kw: ['128k', '320k', 'flac', 'flac24bit'],
+  tx: ['128k', '320k', 'flac', 'flac24bit'],
   kg: ['128k', '320k', 'flac', 'flac24bit'],
   mg: ['128k', '320k', 'flac', 'flac24bit'],
 }
@@ -194,8 +251,6 @@ const TX_FILE_CONFIG = {
 const WY_LEVEL_MAP = { '128k': 'standard', '320k': 'exhigh', flac: 'lossless', flac24bit: 'hires' }
 
 const KW_BR_MAP = { '128k': '128kmp3', '320k': '320kmp3', flac: '2000kflac', flac24bit: '4000kflac' }
-const KW_STREAM_LEVEL_MAP = { '128k': '128k', '320k': '320k', flac: 'flac', flac24bit: 'flac' }
-const KW_MMP_BR_MAP = { '128k': '128', '320k': '320', flac: 'flac', flac24bit: 'hires' }
 const KW_APIZERO_Q_MAP = { '128k': 'h', '320k': 'p', flac: 'ff', flac24bit: 'ff' }
 
 const KG_LEVEL_MAP = { '128k': 'standard', '320k': 'exhigh', flac: 'lossless', flac24bit: 'hires' }
@@ -332,34 +387,10 @@ const gdstudioNetease = async (songmid, quality) => {
   return url
 }
 
-// 旧版签名接口（music.gdstudio.xyz，2026-11 实测已无响应，保留为最后兜底）
-const FISH_DOMAIN = 'music.gdstudio.xyz'
-const FISH_VERSION = '20260510'
-const fishSign = async (secret) => {
-  const timeRes = await httpFetch('https://' + FISH_DOMAIN + '/time', { method: 'GET', timeout: 4500 })
-  const timeStr = String(Number(timeRes.body) || Date.now()).slice(0, 9)
-  const signInput = FISH_DOMAIN + '|' + FISH_VERSION + '|' + timeStr + '|' + secret
-  return md5(signInput).slice(-8).toUpperCase()
-}
-const fishPost = async (params, secret) => {
-  const sign = await fishSign(secret)
-  params.s = sign
-  const res = await httpFetch('https://' + FISH_DOMAIN + '/api.php', {
-    method: 'POST', timeout: 4500,
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      Origin: 'https://' + FISH_DOMAIN,
-      Referer: 'https://' + FISH_DOMAIN + '/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-    body: objToForm(params),
-  })
-  return res.body
-}
-
 // ==================== HYWmusic 通用公益接口 ====================
+// 春·雨水：内置卡密已失效（401 卡密不存在），改为 @hyw_key 用户填写；未填写直接快速失败。
 const getHywUrl = async (source, songId, quality) => {
+  if (!HYW_CARD_KEY) throw new Error('未配置 @hyw_key（HYW 卡密），已跳过')
   const res = await httpFetch(HYW_API_BASE + '/api/music/url?source=' + source + '&songId=' + encodeURIComponent(songId) + '&quality=' + encodeURIComponent(quality) + '&key=' + encodeURIComponent(HYW_CARD_KEY), {
     method: 'GET', timeout: 5000,
     headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'X-Card-Key': HYW_CARD_KEY },
@@ -372,19 +403,9 @@ const getHywUrl = async (source, songId, quality) => {
   throw new Error('HYWmusic: ' + ((d && (d.message || d.msg)) || '无数据'))
 }
 
-// ==================== 星海后端（yy.zddyr.top，2026-11 实测无响应，保留兜底） ====================
-const getXinghaiUrl = async (source, params) => {
-  const query = objToForm(Object.assign({ source }, params))
-  const res = await httpFetch('https://yy.zddyr.top/lx/api/?' + query, {
-    method: 'GET', timeout: 4500,
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-  })
-  const d = res.body
-  if (d && d.code === 200 && d.url) return d.url
-  throw new Error('星海后端: ' + ((d && d.msg) || '无数据'))
-}
-
 // ==================== QQ 音乐后端池 ====================
+// 排序策略（春·雨水）：官方接口在前，需要填密钥的后端放最后；2026-11-21 实测
+// HelloWorld/念心/ygking/FishAPI旧版/星海 均已失效，仅保留响应正常的后端。
 const TX_BACKENDS = [
   {
     name: 'QQ官方vkey',
@@ -438,67 +459,8 @@ const TX_BACKENDS = [
     },
   },
   {
-    name: 'HelloWorld',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const name = musicInfo.name || musicInfo.songName || ''
-      const singer = musicInfo.singer || ''
-      const keywordText = (name + ' ' + singer).trim()
-      if (!keywordText) throw new Error('HelloWorld: 缺少歌曲名')
-      const keyword = encodeURIComponent(keywordText)
-      const qMap = { '128k': '0', '320k': '1', flac: '4', flac24bit: '4' }
-      const type = qMap[quality] || '1'
-      const res = await httpFetch('https://a.aa.cab/qq.music?msg=' + keyword + '&n=1&type=' + type, {
-        method: 'GET', timeout: 5000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', Accept: 'application/json' },
-      })
-      const d = res.body
-      const url = extractUrl(d, [['data', 'music'], ['playUrl'], ['url'], ['data', 'url']])
-      if (url) return url
-      throw new Error('HelloWorld: 无有效链接')
-    },
-  },
-  {
     name: 'HYWmusic',
     fetch: async (songmid, quality) => getHywUrl('tx', songmid, quality),
-  },
-  {
-    name: '念心TX',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('https://music.nxinxz.com/kgqq/tx.php?id=' + encodeURIComponent(songmid) + '&level=' + encodeURIComponent(quality) + '&type=mp3', {
-        method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('念心TX: 无数据')
-    },
-  },
-  {
-    name: 'ygking',
-    fetch: async (songmid, quality) => {
-      const qMap = { '128k': '128', '320k': '320', flac: 'flac', flac24bit: 'flac24bit' }
-      const res = await httpFetch('https://api.ygking.cn/api/song/url?mid=' + encodeURIComponent(songmid) + '&quality=' + (qMap[quality] || '128'), {
-        method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const url = extractAnyPlayableUrl(res.body)
-      if (url) return url
-      throw new Error('ygking: 无数据')
-    },
-  },
-  {
-    name: 'FishAPI旧版',
-    fetch: async (songmid, quality) => {
-      const br = WY_FISH_BR_MAP[quality]
-      if (!br) throw new Error('FishAPI旧版: 不支持的音质')
-      const result = await fishPost({ types: 'url', id: songmid, source: 'qq', br }, encodeURIComponent(songmid))
-      const url = result && result.url ? normalizeUrl(String(result.url)) : ''
-      if (url.startsWith('http')) return url
-      throw new Error('FishAPI旧版: 无数据')
-    },
-  },
-  {
-    name: '星海TX',
-    fetch: async (songmid, quality) => getXinghaiUrl('qq', { songmid, quality }),
   },
 ]
 
@@ -530,6 +492,10 @@ const WY_BACKENDS = [
     },
   },
   {
+    name: 'gdstudio网易',
+    fetch: async (songmid, quality) => gdstudioNetease(songmid, quality),
+  },
+  {
     name: 'ikun网易云',
     fetch: async (songmid, quality, musicInfo = {}) => {
       const songId = (musicInfo.hash != null) ? musicInfo.hash : songmid
@@ -548,27 +514,6 @@ const WY_BACKENDS = [
     },
   },
   {
-    name: 'gdstudio网易',
-    fetch: async (songmid, quality) => gdstudioNetease(songmid, quality),
-  },
-  {
-    name: 'HYWmusic',
-    fetch: async (songmid, quality) => getHywUrl('wy', songmid, quality),
-  },
-  {
-    name: '笒鬼鬼',
-    fetch: async (songmid, quality) => {
-      const level = WY_LEVEL_MAP[quality] || 'standard'
-      const res = await httpFetch('https://api.cenguigui.cn/api/netease/music_v1.php?id=' + encodeURIComponent(songmid) + '&type=json&level=' + level, {
-        method: 'GET', timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      if (d && d.data && d.data.url) return d.data.url
-      if (d && d.url) return d.url
-      throw new Error('笒鬼鬼: 无数据')
-    },
-  },
-  {
     name: '残像WY',
     fetch: async (songmid, quality) => {
       const res = await httpFetch('https://api.canxiang.cn/api/wyymusic?token=' + encodeURIComponent(CANXIANG_TOKEN) + '&type=' + encodeURIComponent(quality) + '&id=' + encodeURIComponent(songmid), {
@@ -580,24 +525,15 @@ const WY_BACKENDS = [
     },
   },
   {
-    name: '念心WY',
-    fetch: async (songmid, quality) => {
-      const res = await httpFetch('http://music.nxinxz.com/wy.php?id=' + encodeURIComponent(songmid) + '&level=' + encodeURIComponent(quality) + '&type=mp3', {
-        method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.url) return d.url
-      throw new Error('念心WY: 无数据')
-    },
-  },
-  {
-    name: '星海WY',
-    fetch: async (songmid, quality) => getXinghaiUrl('netease', { songmid, quality }),
+    name: 'HYWmusic',
+    fetch: async (songmid, quality) => getHywUrl('wy', songmid, quality),
   },
 ]
 
 // ==================== 酷我后端池 ====================
+// 排序策略（春·雨水）：手机版/官方/ikun 三个免密钥后端前置，需 API/Token 的
+// 极数/云萌阁/HYW 放最后；2026-11-21 实测酷我流媒体参数变更、晚风路由 404、
+// 远梦(mmp)停服、星海失联，均已移除。
 const getKwKeyword = (musicInfo = {}, songmid = '') => {
   const name = musicInfo.name || musicInfo.songName || musicInfo.title || ''
   const singer = musicInfo.singer || musicInfo.artist || musicInfo.author || ''
@@ -658,16 +594,6 @@ const KW_BACKENDS = [
     },
   },
   {
-    name: '酷我流媒体',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const level = KW_STREAM_LEVEL_MAP[quality]
-      if (!level) throw new Error('酷我流媒体: 不支持的音质')
-      const songId = getKwRid(musicInfo, songmid)
-      if (!songId) throw new Error('酷我流媒体: 找不到歌曲ID')
-      return 'http://175.27.166.236:8928/kwstream?id=' + encodeURIComponent(songId) + '&level=' + level + '&stream=1'
-    },
-  },
-  {
     name: '极数本源酷我',
     fetch: async (songmid, quality, musicInfo = {}) => {
       const q = KW_APIZERO_Q_MAP[quality]
@@ -725,58 +651,6 @@ const KW_BACKENDS = [
   {
     name: 'HYWmusic',
     fetch: async (songmid, quality) => getHywUrl('kw', songmid, quality),
-  },
-  {
-    name: '晚风酷我',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      if (!WANFENG_KEY) throw new Error('晚风酷我: 未配置密钥')
-      const rid = getKwRid(musicInfo, songmid)
-      const keyword = getKwKeyword(musicInfo, songmid)
-      const q = KW_APIZERO_Q_MAP[quality] || 'h'
-      const key = encodeURIComponent(WANFENG_KEY)
-      const candidates = [
-        'https://api.nonebot.top/api/v1/kuwo?key=' + key + '&id=' + encodeURIComponent(rid) + '&quality=' + encodeURIComponent(q),
-        'https://api.nonebot.top/api/v1/music/kuwo?key=' + key + '&id=' + encodeURIComponent(rid) + '&quality=' + encodeURIComponent(q),
-        'https://api.nonebot.top/api/v1/music/url?key=' + key + '&source=kw&songId=' + encodeURIComponent(rid) + '&quality=' + encodeURIComponent(quality),
-        'https://api.nonebot.top/api/v1/kuwo?key=' + key + '&name=' + encodeURIComponent(keyword) + '&quality=' + encodeURIComponent(q),
-      ]
-      const errors = []
-      for (const api of candidates) {
-        try {
-          const res = await httpFetch(api, { method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' } })
-          const play = extractAnyPlayableUrl(res.body)
-          if (play && !isKuwoHotlinkRiskUrl(play)) return play
-          errors.push('无直链')
-        } catch (e) {
-          errors.push((e && e.message) || String(e))
-        }
-      }
-      throw new Error('晚风酷我: ' + errors.join('; '))
-    },
-  },
-  {
-    name: '远梦酷我(mmp)',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const br = KW_MMP_BR_MAP[quality]
-      if (!br) throw new Error('远梦酷我: 不支持的音质')
-      const keyword = getKwKeyword(musicInfo, songmid)
-      if (!keyword) throw new Error('远梦酷我: 缺少关键词')
-      const res = await httpFetch('https://api.mmp.cc/api/kuwo?action=search_song&msg=' + encodeURIComponent(keyword) + '&pageSize=5&br=' + encodeURIComponent(br), {
-        method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-      })
-      const d = res.body
-      const play = extractAnyPlayableUrl(d)
-      if (play && !isKuwoHotlinkRiskUrl(play)) return play
-      throw new Error('远梦酷我: ' + ((d && d.msg) || '无可用直链'))
-    },
-  },
-  {
-    name: '星海KW',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const name = musicInfo.name || ''
-      const singer = musicInfo.singer || ''
-      return getXinghaiUrl('kw', { name, singer, songmid, quality })
-    },
   },
 ]
 
@@ -845,44 +719,11 @@ const KG_BACKENDS = [
     name: 'HYWmusic',
     fetch: async (songmid, quality) => getHywUrl('kg', songmid, quality),
   },
-  {
-    name: '长青海棠',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const level = KG_LEVEL_MAP[quality] || 'standard'
-      const hash = musicInfo.hash || musicInfo.songmid || songmid
-      const res = await httpFetch('https://musicserver.haitangw.cc/v1/music/resolve-url', {
-        method: 'POST', timeout: 4500,
-        headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        body: JSON.stringify({ source: 'kg', rid: hash, level }),
-      })
-      const d = res.body
-      if (d && d.code === 0 && d.data && d.data.url) return d.data.url
-      throw new Error('长青海棠: ' + ((d && d.msg) || '无数据'))
-    },
-  },
-  {
-    name: '念心KG',
-    fetch: async (songmid, quality) => {
-      const level = KG_LEVEL_MAP[quality] || 'standard'
-      const res = await httpFetch('https://music.nxinxz.com/kgqq/kg.php?id=' + encodeURIComponent(songmid) + '&level=' + encodeURIComponent(level) + '&type=mp3', {
-        method: 'GET', timeout: 4500, headers: { 'User-Agent': 'Mozilla/5.0' },
-      })
-      const d = res.body
-      if (typeof d === 'string' && (d.startsWith('http://') || d.startsWith('https://'))) return d
-      if (d && d.code === 200 && d.url) return d.url
-      throw new Error('念心KG: 无数据')
-    },
-  },
-  {
-    name: '星海KG',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const hash = musicInfo.hash || musicInfo.songmid || songmid
-      return getXinghaiUrl('kg', { songmid: hash, quality })
-    },
-  },
 ]
 
 // ==================== 咪咕后端池 ====================
+// 排序策略（春·雨水）：无 token 的轻接口在前（v2.2/直接源/Migu API），带内置 token 的
+// 后端（自建H5/官方v2.4）及需 @hyw_key 的后端放最后；2026-11-21 实测星海已移除。
 const extractMiguUrl = (d) => extractUrl(d, [
   ['url'], ['playUrl'], ['play_url'],
   ['data'], ['data', 'url'], ['data', 'playUrl'], ['data', 'play_url'],
@@ -1022,30 +863,6 @@ const miguAppV22 = async (copyrightId, toneFlag) => {
 
 const MG_BACKENDS = [
   {
-    name: '咪咕官方v2.4',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      const ids = getMiguContentIds(musicInfo, songmid)
-      const copyrightId = ids.copyrightId || songmid
-      if (!copyrightId) throw new Error('咪咕官方v2.4: 缺少 copyrightId')
-      return miguAppV24(copyrightId, MG_TONE_FLAG_MAP[quality] || 'PQ')
-    },
-  },
-  {
-    name: '自建咪咕H5v2.4',
-    fetch: async (songmid, quality, musicInfo = {}) => {
-      if (!MIGU_H5V24_BASE || !MIGU_H5V24_TOKEN) throw new Error('自建咪咕H5v2.4: 未配置接口')
-      const toneFlag = MG_TONE_FLAG_MAP[quality] || 'PQ'
-      // 优先用 musicInfo 自带的真实 contentId；失败则走搜索解析兜底
-      const guess = getMiguContentIds(musicInfo, songmid)
-      const hasRealContentId = !!(musicInfo.contentId || musicInfo.content_id || musicInfo.contentid)
-      if (hasRealContentId && guess.contentId && guess.copyrightId) {
-        try { return await miguFetchH5v24(guess, toneFlag) } catch (e) { /* 落入搜索解析兜底 */ }
-      }
-      const ids = await resolveMiguIds(musicInfo, songmid)
-      return miguFetchH5v24(ids, toneFlag)
-    },
-  },
-  {
     name: '咪咕官方v2.2',
     fetch: async (songmid, quality, musicInfo = {}) => {
       const ids = getMiguContentIds(musicInfo, songmid)
@@ -1087,12 +904,32 @@ const MG_BACKENDS = [
     },
   },
   {
-    name: 'HYWmusic',
-    fetch: async (songmid, quality) => getHywUrl('mg', songmid, quality),
+    name: '自建咪咕H5v2.4',
+    fetch: async (songmid, quality, musicInfo = {}) => {
+      if (!MIGU_H5V24_BASE || !MIGU_H5V24_TOKEN) throw new Error('自建咪咕H5v2.4: 未配置接口')
+      const toneFlag = MG_TONE_FLAG_MAP[quality] || 'PQ'
+      // 优先用 musicInfo 自带的真实 contentId；失败则走搜索解析兜底
+      const guess = getMiguContentIds(musicInfo, songmid)
+      const hasRealContentId = !!(musicInfo.contentId || musicInfo.content_id || musicInfo.contentid)
+      if (hasRealContentId && guess.contentId && guess.copyrightId) {
+        try { return await miguFetchH5v24(guess, toneFlag) } catch (e) { /* 落入搜索解析兜底 */ }
+      }
+      const ids = await resolveMiguIds(musicInfo, songmid)
+      return miguFetchH5v24(ids, toneFlag)
+    },
   },
   {
-    name: '星海咪咕',
-    fetch: async (songmid, quality) => getXinghaiUrl('migu', { songmid, quality }),
+    name: '咪咕官方v2.4',
+    fetch: async (songmid, quality, musicInfo = {}) => {
+      const ids = getMiguContentIds(musicInfo, songmid)
+      const copyrightId = ids.copyrightId || songmid
+      if (!copyrightId) throw new Error('咪咕官方v2.4: 缺少 copyrightId')
+      return miguAppV24(copyrightId, MG_TONE_FLAG_MAP[quality] || 'PQ')
+    },
+  },
+  {
+    name: 'HYWmusic',
+    fetch: async (songmid, quality) => getHywUrl('mg', songmid, quality),
   },
 ]
 
@@ -1106,14 +943,6 @@ const getSongIdBySource = (source, musicInfo = {}) => {
   return musicInfo.hash || musicInfo.songmid || musicInfo.id || ''
 }
 
-const QUALITY_FALLBACK_ORDER = {
-  tx: ['128k', '320k', 'flac', 'flac24bit'],
-  wy: ['128k', '320k', 'flac', 'flac24bit'],
-  kw: ['128k', '320k', 'flac', 'flac24bit'],
-  kg: ['128k', '320k', 'flac', 'flac24bit'],
-  mg: ['128k', '320k', 'flac', 'flac24bit'],
-}
-
 const uniq = (arr) => {
   const list = []
   for (const item of arr) {
@@ -1122,18 +951,27 @@ const uniq = (arr) => {
   return list
 }
 
+// 春·雨水：降级链简化为「请求音质 → 128k」两轮，避免逐音质全量重试拖垮取链窗口；
+// 网易云按请求音质直取（免费歌曲无 Cookie 也可返回 320k/flac），试听/无权限由
+// 官方后端抛错后降级到 128k 重试。
 const getQualityCandidates = (source, requestedQuality) => {
   const supported = MUSIC_QUALITY[source] || [LOWEST_QUALITY]
-  const base = QUALITY_FALLBACK_ORDER[source] || [LOWEST_QUALITY]
   const requested = supported.includes(requestedQuality) ? requestedQuality : LOWEST_QUALITY
-  // 网易云：按请求音质直取（免费歌曲无 Cookie 也可返回 320k/flac），试听/无权限由
-  // 官方后端抛错并交给音质降级链处理，不再无 Cookie 时强制压到 128k
-  const candidates = uniq([requested, LOWEST_QUALITY].concat(base)).filter(q => supported.includes(q))
+  const candidates = uniq([requested, LOWEST_QUALITY]).filter(q => supported.includes(q))
   return candidates.length ? candidates : [supported[0] || LOWEST_QUALITY]
 }
 
-// ==================== 核心请求（缓存 + 分批并发兜底） ====================
+// ==================== 核心请求（日志 + 冷却 + 时间预算 + 顺序兜底） ====================
+// 春·雨水重写要点：
+// 1) 不再并发竞速：竞速会把最慢后端的超时叠加进每次取链，且失败信息杂乱；改为严格按
+//    后端池顺序依次尝试（实测可用在前，需 API/Token 的在后）；
+// 2) 失败冷却：失败过的后端 10 分钟内自动跳过（全部冷却时忽略冷却照常尝试）；
+// 3) 时间预算：单次取链总预算 9.5 秒，剩余不足 1.2 秒时停止尝试并返回已收集的错误摘要。
+const REQUEST_BUDGET_MS = 9500
+const MIN_ATTEMPT_BUDGET_MS = 1200
+
 const handleGetMusicUrl = async (source, musicInfo = {}, quality = LOWEST_QUALITY) => {
+  const t0 = Date.now()
   let songId = getSongIdBySource(source, musicInfo)
   if (!songId && source === 'mg') {
     // 咪咕兜底：musicInfo 缺少 ID 时允许纯搜索解析（按歌名+歌手）
@@ -1141,52 +979,82 @@ const handleGetMusicUrl = async (source, musicInfo = {}, quality = LOWEST_QUALIT
     const singer = musicInfo.singer || musicInfo.artist || musicInfo.author || ''
     if ((name + singer).trim()) songId = 'search:' + name + ' ' + singer
   }
-  if (!songId) throw new Error('无法获取歌曲ID')
+  if (!songId) {
+    Logger.error(source, '无法获取歌曲ID（musicInfo 缺少 id/hash/rid/copyrightId 等字段）')
+    throw new Error('无法获取歌曲ID')
+  }
 
-  const backends = { tx: TX_BACKENDS, wy: WY_BACKENDS, kw: KW_BACKENDS, kg: KG_BACKENDS, mg: MG_BACKENDS }[source]
-  if (!backends || !backends.length) throw new Error('未知音源或没有可用后端: ' + source)
+  const backends = { wy: WY_BACKENDS, kw: KW_BACKENDS, tx: TX_BACKENDS, kg: KG_BACKENDS, mg: MG_BACKENDS }[source]
+  if (!backends || !backends.length) {
+    Logger.error(source, '未知音源或没有可用后端: ' + source)
+    throw new Error('未知音源或没有可用后端: ' + source)
+  }
 
   const qualityCandidates = getQualityCandidates(source, quality)
-  const errors = []
+  const deadline = t0 + REQUEST_BUDGET_MS
 
+  // 失败冷却：跳过近期失败过的后端；若该平台全部后端都在冷却中则照常尝试
+  const cooling = backends.filter(b => inBackendCooldown(source, b.name))
+  const hot = backends.filter(b => !inBackendCooldown(source, b.name))
+  const tryList = hot.length ? hot : backends
+  if (cooling.length && hot.length) {
+    Logger.info(source, '冷却跳过 ' + cooling.length + ' 个后端: ' + cooling.map(b => b.name).join(', '))
+  }
+  Logger.info(source, '取链开始 songId=' + songId + ' 请求音质=' + quality
+    + ' 候选音质=' + qualityCandidates.join('/')
+    + ' 后端=' + tryList.length + '/' + backends.length
+    + (hot.length ? '' : '（全部冷却中，忽略冷却照常尝试）'))
+
+  const errors = []
+  let budgetExhausted = false
+
+  outer:
   for (const targetQuality of qualityCandidates) {
     const cacheKey = buildCacheKey(source, songId, targetQuality)
     const cached = getCachedUrl(cacheKey)
     if (cached) {
-      console.log('[椰子音源] 缓存命中: ' + source + ' ' + songId + ' ' + targetQuality)
+      Logger.info(source, '缓存命中 ' + songId + ' ' + targetQuality + '（总耗时 ' + (Date.now() - t0) + 'ms）')
       return cached
     }
 
-    // 第一梯队：前两个后端并发竞速，降低整体等待
-    try {
-      const result = await promiseAny(backends.slice(0, 2).map(async (backend) => {
-        const url = await backend.fetch(songId, targetQuality, musicInfo)
-        if (isPlayableUrl(url, source)) return normalizeUrl(url)
-        throw new Error(backend.name + ' 返回无效URL')
-      }))
-      setCachedUrl(cacheKey, normalizeUrl(result))
-      return normalizeUrl(result)
-    } catch (err) {
-      if (err && err.message) errors.push(targetQuality + ' 梯队1: ' + err.message)
-    }
-
-    // 第二梯队：剩余后端顺序尝试（按 2026-11 实测可用性排序）
-    for (const backend of backends.slice(2)) {
+    for (const backend of tryList) {
+      const remaining = deadline - Date.now()
+      if (remaining < MIN_ATTEMPT_BUDGET_MS) {
+        budgetExhausted = true
+        Logger.warn(source, '时间预算用尽（' + REQUEST_BUDGET_MS + 'ms），停止后续尝试')
+        break outer
+      }
+      const at = Date.now()
       try {
         const url = await backend.fetch(songId, targetQuality, musicInfo)
+        const ms = Date.now() - at
         if (isPlayableUrl(url, source)) {
           const clean = normalizeUrl(url)
           setCachedUrl(cacheKey, clean)
+          clearBackendCooldown(source, backend.name)
+          Logger.info(source, backend.name + ' 成功 ' + targetQuality + ' ' + ms + 'ms -> ' + clean.slice(0, 80))
+          Logger.info(source, '取链完成 总耗时 ' + (Date.now() - t0) + 'ms（后端 ' + backend.name + '，音质 ' + targetQuality + '）')
           return clean
         }
+        markBackendFail(source, backend.name, '返回无效URL')
+        Logger.warn(source, backend.name + ' 返回无效URL ' + ms + 'ms（冷却 ' + Math.round(BACKEND_COOLDOWN_MS / 60000) + ' 分钟）')
         errors.push(targetQuality + ' ' + backend.name + ': 返回无效URL')
       } catch (e) {
-        errors.push(targetQuality + ' ' + backend.name + ': ' + ((e && e.message) || e))
+        const ms = Date.now() - at
+        const reason = (e && e.message) || String(e)
+        markBackendFail(source, backend.name, reason)
+        Logger.warn(source, backend.name + ' 失败 ' + ms + 'ms ' + reason)
+        errors.push(targetQuality + ' ' + backend.name + ': ' + reason)
       }
     }
   }
 
-  throw new Error('所有后端均失败，已尝试音质：' + qualityCandidates.join(', ') + '\n' + errors.join('\n'))
+  const head = budgetExhausted
+    ? '时间预算用尽，部分后端未及尝试（耗时 ' + (Date.now() - t0) + 'ms，已尝试音质：' + qualityCandidates.join(', ') + '）'
+    : '所有后端均失败（耗时 ' + (Date.now() - t0) + 'ms，已尝试音质：' + qualityCandidates.join(', ') + '）'
+  const summary = head + '\n' + errors.join('\n')
+  Logger.error(source, '取链失败 ' + songId + ' —— ' + summary.replace(/\n/g, ' | '))
+  throw new Error(summary)
 }
 
 // ==================== 事件注册 ====================
@@ -1203,7 +1071,7 @@ on(EVENT_NAMES.request, ({ action, source, info }) => {
 
 // ==================== 初始化 ====================
 const musicSources = {}
-const SOURCE_NAME_MAP = { tx: 'QQ音乐', wy: '网易云音乐', kw: '酷我音乐', kg: '酷狗音乐', mg: '咪咕音乐' }
+const SOURCE_NAME_MAP = { wy: '网易云音乐', kw: '酷我音乐', tx: 'QQ音乐', kg: '酷狗音乐', mg: '咪咕音乐' }
 MUSIC_SOURCE.forEach((item) => {
   musicSources[item] = {
     name: SOURCE_NAME_MAP[item] || item,
@@ -1215,6 +1083,13 @@ MUSIC_SOURCE.forEach((item) => {
 
 send(EVENT_NAMES.inited, { openDevTools: false, sources: musicSources })
 
-console.log('[椰子音源] 春·立春 已加载完成 (' + (env || 'unknown') + ')')
-console.log('[椰子音源] 平台: ' + MUSIC_SOURCE.join(', '))
-console.log('[椰子音源] 后端数 - QQ: ' + TX_BACKENDS.length + ' | 网易: ' + WY_BACKENDS.length + ' | 酷我: ' + KW_BACKENDS.length + ' | 酷狗: ' + KG_BACKENDS.length + ' | 咪咕: ' + MG_BACKENDS.length)
+// 启动日志（同时写入环形缓冲，可用 __coconutLog.dump() 导出）
+Logger.info('INIT', '椰子音源 春·雨水 已加载完成 (' + (env || 'unknown') + (version ? '，LX ' + version : '') + ')')
+Logger.info('INIT', '平台顺序: ' + MUSIC_SOURCE.join(' -> '))
+Logger.info('INIT', '后端数 - 网易: ' + WY_BACKENDS.length + ' | 酷我: ' + KW_BACKENDS.length + ' | QQ: ' + TX_BACKENDS.length + ' | 酷狗: ' + KG_BACKENDS.length + ' | 咪咕: ' + MG_BACKENDS.length)
+Logger.info('INIT', '兜底策略: 顺序尝试（可用在前，需 API/Token 在后）+ 失败冷却 ' + Math.round(BACKEND_COOLDOWN_MS / 60000) + ' 分钟 + 单次预算 ' + REQUEST_BUDGET_MS + 'ms')
+Logger.info('INIT', '可选配置: @tx_cookie ' + (HAS_TX_COOKIE ? '已填写' : '未填')
+  + ' | @wy_cookie ' + (HAS_WY_COOKIE ? '已填写' : '未填')
+  + ' | @hyw_key ' + (HYW_CARD_KEY ? '已填写' : '未填')
+  + ' | @canxiang_token ' + (config.canxiang_token ? '已填写' : '使用内置')
+  + ' | @wanfeng_key/@yunmge_token/@apizero_key ' + ((config.wanfeng_key || config.yunmge_token || config.apizero_key) ? '部分已填' : '未填（用内置默认值）'))
